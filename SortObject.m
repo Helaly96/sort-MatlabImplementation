@@ -1,0 +1,91 @@
+% This class represents the internal state of individual tracked objects observed as bbox.
+classdef SortObject
+    properties
+        % Maximum Age 'age of not being detected' and if More than that it will be removed
+        MaxAge= NaN
+        % Minimum number of times the object needs to be seen to be considered an object
+        MinHits= NaN
+        % Minimum Overlap ratio between bounding boxes
+        IOUThreshold=NaN;
+        % Number of frames seen
+        FrameCount= 0;
+        % Trackers Array
+        Trackers= {}  
+        % Id of each Object
+        Id= 1;
+    end
+    
+    methods
+        function obj= SortObject(MaxAge,MinHits,IOUThreshold)
+                 obj.MaxAge= MaxAge;
+                 obj.MinHits= MinHits;
+                 obj.IOUThreshold= IOUThreshold;
+        end
+        
+        function [obj,ret,IOUMatrix,Detections,trks]=UpdateSort(obj,Detections)
+                 obj.FrameCount= obj.FrameCount+1;
+                 ret= {};
+                 
+                 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+                 %Get the predicted locations from pre-exsisting trackers (in the array)
+                 trks= {};
+                 to_del= [];
+                 
+                 
+                 % Loop on all the trackers and get their predictions.
+                 for    i=1:length(obj.Trackers)
+                        [Pred,obj.Trackers{i}]= obj.Trackers{i}.KalmanFilterobjectPredict();
+                        SRBox= Pred(1:4);
+                        pos= ConvertSRToBox(SRBox);
+                        trks{i}= pos;
+                        if    any(isinf(pos))
+                              to_del(end+1)= i;
+                        end   
+                 end
+                 
+                 % Delete trackers that are wrong
+                 for    i=1:length(to_del)
+                        obj.Trackers(i)=[];
+                 end
+                 
+                 trks= reshape(trks,[length(trks),1]);
+                 
+                 [Matched, UnmatchedDetections, UnmatchedTrackers,IOUMatrix]= AssociateDetectionToTrackers(Detections,trks, obj.IOUThreshold);
+                 
+                 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+                 % Update  Matched Trackers with the matched Detections (Measurment)
+                 for k=1:length(Matched)
+                     IndexOfDetection=Matched{k}(1);
+                     IndexOfTrakcer=Matched{k}(2);
+                     [~,obj.Trackers{IndexOfTrakcer}]=obj.Trackers{IndexOfTrakcer}.KalmanFilterobjectUpdate(Detections{IndexOfDetection});
+                 end
+                 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+                 % Create new trackers for unmatched detections
+                 for n=1:length(UnmatchedDetections)
+                     trk= KalmanFilterObject(obj.Id,Detections{UnmatchedDetections(n)});
+                     obj.Id= obj.Id+1;
+                     obj.Trackers{end+1}=trk;
+                 end
+                 F= length(obj.Trackers);
+                 dead_tracklets= [];
+                 %Loop on all trackers
+                 for    ReturnCounter=1:F
+                        d= obj.Trackers{ReturnCounter}.GetCurrentBoundingBoxEstimate();
+                        if    (obj.Trackers{ReturnCounter}.TimeSinceUpdate < 1)&& ((obj.Trackers{ReturnCounter}.HitsStreak>obj.MinHits)||(obj.FrameCount<=obj.MinHits))
+                              ret{end+1}={d,obj.Trackers{ReturnCounter}.id};
+                        end
+                        
+                        %Remove dead Tracklet
+                        if    (obj.Trackers{ReturnCounter}.TimeSinceUpdate>obj.MaxAge)
+                              dead_tracklets(end+1)= ReturnCounter;
+                        end
+                 end
+                 
+                 for DeleteCounter=1:length(dead_tracklets)
+                     obj.Trackers(DeleteCounter)=[];
+                 end
+                 
+                    
+        end
+    end
+end
